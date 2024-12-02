@@ -1,21 +1,30 @@
 -module(factorial).
 -export([calculate/1]).
--import(erlang, [spawn/3, receive/1, wait/1]).
 
 calculate(N) when N >= 0 ->
     Pid = self(),
     NbCores = erlang:system_info(schedulers_online),
-    ChunkSize = N div NbCores,
-    Chunks = lists:split(ChunkSize, lists:seq(1, N)),
-    Pids = [spawn(fun() -> Pid ! {self(), calculate_chunk(Chunk)} end) || Chunk <- Chunks],
-    Acc = receive_results(NbCores),
-    wait(Pids),
-    Acc.
+    ChunkSize =
+        N div NbCores +
+            if
+                N rem NbCores > 0 -> 1;
+                true -> 0
+            end,
+    Ranges = [{(I - 1) * ChunkSize + 1, min(I * ChunkSize, N)} || I <- lists:seq(1, NbCores)],
+    [spawn(fun() -> Pid ! calculate_range(Start, End) end) || {Start, End} <- Ranges],
+    receive_results(NbCores, 1).
 
-calculate_chunk(Chunk) ->
-    lists:foldl(fun(X, Acc) -> X * Acc end, 1, Chunk).
+calculate_range(Start, End) when Start > End ->
+    1;
+calculate_range(Start, End) ->
+    lists:foldl(fun(X, Acc) -> X * Acc end, 1, lists:seq(Start, End)).
 
-receive_results(0) -> 1;
-receive_results(N) ->
-    {_, Acc} = receive({_, Acc}),
-    Acc * receive_results(N-1).
+receive_results(0, Acc) ->
+    Acc;
+receive_results(N, Acc) ->
+    receive
+        ChunkAcc ->
+            receive_results(N - 1, Acc * ChunkAcc)
+    after 5000 ->
+        exit(timeout)
+    end.
